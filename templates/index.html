@@ -24,6 +24,114 @@
 
     map.on('style.load', () => {
         map.setFog({}); // Set the default atmosphere style
+
+        // Add source for country boundaries
+        map.addSource('countries', {
+            type: 'vector',
+            url: 'mapbox://mapbox.country-boundaries-v1'
+        });
+
+        // Add layer for country fills, styled based on hover state
+        map.addLayer({
+            'id': 'country-boundaries-fill',
+            'type': 'fill',
+            'source': 'countries',
+            'source-layer': 'country_boundaries', // Specify the layer within the vector source
+            'paint': {
+                'fill-color': '#627BC1', // Base color for highlight
+                'fill-opacity': [
+                    'case',
+                    ['boolean', ['feature-state', 'selected'], false], 0.7, // Selected state opacity
+                    ['boolean', ['feature-state', 'hover'], false], 0.5,    // Hover state opacity
+                    0.0                                                    // Default opacity (invisible)
+                ]
+            }
+        });
+
+        // Add layer for country outlines
+        map.addLayer({
+            'id': 'country-boundaries-line',
+            'type': 'line',
+            'source': 'countries',
+            'source-layer': 'country_boundaries',
+            'paint': {
+                'line-color': '#FFFFFF', // White outline
+                'line-width': [
+                    'case',
+                    ['boolean', ['feature-state', 'selected'], false], 1.5, // Thicker line for selected
+                    0.5 // Default line width
+                ],
+                'line-opacity': [
+                    'case',
+                    ['boolean', ['feature-state', 'selected'], false], 0.8, // More opaque line for selected
+                     0.5 // Default line opacity
+                ]
+            }
+        });
+
+        // Variables to store the IDs of the hovered and selected countries
+        let hoveredCountryId = null;
+        let selectedCountryId = null;
+
+        // Mousemove event listener (handles hover state)
+        map.on('mousemove', 'country-boundaries-fill', (e) => {
+            if (e.features.length > 0) {
+                // Only manage hover state if the feature is not the selected one
+                if (hoveredCountryId !== e.features[0].id) {
+                    // Reset state for the previously hovered feature (if it exists and isn't the selected one)
+                    if (hoveredCountryId !== null && hoveredCountryId !== selectedCountryId) {
+                        map.setFeatureState(
+                            { source: 'countries', sourceLayer: 'country_boundaries', id: hoveredCountryId },
+                            { hover: false }
+                        );
+                    }
+                    hoveredCountryId = e.features[0].id;
+                    // Set hover state for the current feature (if it isn't the selected one)
+                    if (hoveredCountryId !== selectedCountryId) {
+                         map.setFeatureState(
+                            { source: 'countries', sourceLayer: 'country_boundaries', id: hoveredCountryId },
+                            { hover: true }
+                        );
+                    }
+                }
+            }
+        });
+
+        // Mouseleave event listener (handles hover state)
+        map.on('mouseleave', 'country-boundaries-fill', () => {
+            // Reset state for the previously hovered feature (if it exists and isn't the selected one)
+            if (hoveredCountryId !== null && hoveredCountryId !== selectedCountryId) {
+                map.setFeatureState(
+                    { source: 'countries', sourceLayer: 'country_boundaries', id: hoveredCountryId },
+                    { hover: false }
+                );
+            }
+            hoveredCountryId = null;
+        });
+
+        // Click event listener (handles selected state)
+        map.on('click', 'country-boundaries-fill', (e) => {
+            if (e.features.length > 0) {
+                const clickedCountryId = e.features[0].id;
+
+                // If there was a previously selected country, reset its state
+                if (selectedCountryId !== null) {
+                     map.setFeatureState(
+                        { source: 'countries', sourceLayer: 'country_boundaries', id: selectedCountryId },
+                        { selected: false, hover: false } // Also clear hover just in case
+                    );
+                }
+
+                // Update the selected country ID
+                selectedCountryId = clickedCountryId;
+
+                // Set the state for the newly selected country
+                map.setFeatureState(
+                    { source: 'countries', sourceLayer: 'country_boundaries', id: selectedCountryId },
+                    { selected: true, hover: false } // Ensure hover is false when selected
+                );
+            }
+        });
     });
 </script>
 
