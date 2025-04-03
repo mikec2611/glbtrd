@@ -14,82 +14,187 @@
 
 <script>
     mapboxgl.accessToken = '{{ mapbox_token }}';
+
+    // --- Sample Data (Replace with real data source) ---
+    const countryCentroids = {
+        // Approx coordinates (lng, lat) - Add more as needed
+        'USA': [-98.5, 39.8],
+        'CAN': [-106.3, 56.1],
+        'MEX': [-102.5, 23.6],
+        'CHN': [104.1, 35.8],
+        'JPN': [138.2, 36.2],
+        'DEU': [10.4, 51.1],
+        'GBR': [-3.4, 55.3],
+        'FRA': [2.2, 46.2],
+    };
+
+    const tradeData = {
+        // Top partners (ISO 3166-1 alpha-3) - Add more as needed
+        'USA': ['CAN', 'MEX', 'CHN', 'JPN', 'DEU'],
+        'CAN': ['USA', 'CHN', 'GBR', 'JPN', 'MEX'],
+        'MEX': ['USA', 'CHN', 'JPN', 'DEU', 'CAN'],
+        'CHN': ['USA', 'JPN', 'KOR', 'VNM', 'DEU'], // Example: KOR, VNM might not be in centroids yet
+        'JPN': ['CHN', 'USA', 'KOR', 'TWN', 'AUS'], // Example: KOR, TWN, AUS might not be in centroids
+        'DEU': ['CHN', 'NLD', 'USA', 'FRA', 'POL'], // Example: NLD, POL might not be in centroids
+        // Add data for other countries you want to be clickable
+    };
+
+    // --- Helper Function to Create Arcs ---
+    function createArc(startCoords, endCoords) {
+        const startLng = startCoords[0];
+        const startLat = startCoords[1];
+        const endLng = endCoords[0];
+        const endLat = endCoords[1];
+
+        // Calculate the midpoint
+        const midLat = (startLat + endLat) / 2;
+        const midLng = (startLng + endLng) / 2;
+
+        // Calculate the distance and bearing for the control point offset
+        const distance = Math.sqrt(Math.pow(endLng - startLng, 2) + Math.pow(endLat - startLat, 2));
+        // Offset the control point perpendicular to the line - adjust multiplier for more/less curve
+        // Simple perpendicular offset (adjust magnitude as needed)
+        const offsetX = (endLat - startLat) * 0.25; // Adjust 0.25 for curve height
+        const offsetY = -(endLng - startLng) * 0.25; // Adjust 0.25 for curve height
+
+        const controlPoint = [midLng + offsetX, midLat + offsetY];
+
+        // Generate points along a quadratic Bezier curve
+        const arcPoints = [];
+        const numPoints = 30; // Number of points in the arc line
+        for (let i = 0; i <= numPoints; i++) {
+            const t = i / numPoints;
+            const lng = (1 - t) * (1 - t) * startLng + 2 * (1 - t) * t * controlPoint[0] + t * t * endLng;
+            const lat = (1 - t) * (1 - t) * startLat + 2 * (1 - t) * t * controlPoint[1] + t * t * endLat;
+            arcPoints.push([lng, lat]);
+        }
+
+        return {
+            type: 'Feature',
+            geometry: {
+                type: 'LineString',
+                coordinates: arcPoints
+            },
+            properties: {}
+        };
+    }
+
+    // --- Map Initialization ---
     const map = new mapboxgl.Map({
         container: 'map',
-        style: 'mapbox://styles/mapbox/satellite-streets-v11', // Satellite style with streets
-        projection: 'globe', // Display the map as a globe, since v2.6.0
+        style: 'mapbox://styles/mapbox/satellite-streets-v11',
+        projection: 'globe',
         zoom: 1.5,
-        center: [-90, 40] // Initial center [lng, lat]
+        center: [-90, 40]
     });
 
     map.on('style.load', () => {
-        map.setFog({}); // Set the default atmosphere style
+        map.setFog({});
 
-        // Add source for country boundaries
+        // --- Add Sources and Layers ---
         map.addSource('countries', {
             type: 'vector',
-            url: 'mapbox://mapbox.country-boundaries-v1'
+            url: 'mapbox://mapbox.country-boundaries-v1',
+            promoteId: 'iso_3166_1_alpha_3' // Promote ISO code to feature ID
         });
 
-        // Add layer for country fills, styled based on hover state
+        // Source for trade arcs (initially empty)
+        map.addSource('trade-arcs-source', {
+            type: 'geojson',
+            data: {
+                type: 'FeatureCollection',
+                features: []
+            }
+        });
+
+        // Layer for country fills (handles hover, selected, trade_partner states)
         map.addLayer({
             'id': 'country-boundaries-fill',
             'type': 'fill',
             'source': 'countries',
-            'source-layer': 'country_boundaries', // Specify the layer within the vector source
+            'source-layer': 'country_boundaries',
             'paint': {
-                'fill-color': '#627BC1', // Base color for highlight
-                'fill-opacity': [
+                // Order matters: More specific states first
+                'fill-color': [
                     'case',
-                    ['boolean', ['feature-state', 'selected'], false], 0.7, // Selected state opacity
-                    ['boolean', ['feature-state', 'hover'], false], 0.5,    // Hover state opacity
-                    0.0                                                    // Default opacity (invisible)
+                    ['boolean', ['feature-state', 'trade_partner'], false], '#2ca02c', // Green for trade partner
+                    ['boolean', ['feature-state', 'selected'], false], '#627BC1',      // Blue for selected
+                    ['boolean', ['feature-state', 'hover'], false], '#a6bddb',         // Lighter blue for hover
+                    'transparent' // Default: transparent fill
+                ],
+                'fill-opacity': [
+                     'case',
+                    ['boolean', ['feature-state', 'trade_partner'], false], 0.6,
+                    ['boolean', ['feature-state', 'selected'], false], 0.7,
+                    ['boolean', ['feature-state', 'hover'], false], 0.5,
+                    0.0 // Default opacity
                 ]
             }
-        });
+        }, 'country-label'); // Place fill below labels
 
-        // Add layer for country outlines
+        // Layer for country outlines (handles selected state)
         map.addLayer({
             'id': 'country-boundaries-line',
             'type': 'line',
             'source': 'countries',
             'source-layer': 'country_boundaries',
             'paint': {
-                'line-color': '#FFFFFF', // White outline
+                'line-color': '#FFFFFF',
                 'line-width': [
                     'case',
-                    ['boolean', ['feature-state', 'selected'], false], 1.5, // Thicker line for selected
-                    0.5 // Default line width
+                    ['boolean', ['feature-state', 'selected'], false], 1.5,
+                    ['boolean', ['feature-state', 'trade_partner'], false], 1.0, // Slightly thicker for partners
+                    0.5
                 ],
                 'line-opacity': [
                     'case',
-                    ['boolean', ['feature-state', 'selected'], false], 0.8, // More opaque line for selected
-                     0.5 // Default line opacity
+                    ['boolean', ['feature-state', 'selected'], false], 0.8,
+                     ['boolean', ['feature-state', 'trade_partner'], false], 0.7,
+                     0.5
                 ]
+            }
+        }, 'country-label'); // Place lines below labels
+
+         // Layer for drawing trade arcs
+         map.addLayer({
+            id: 'trade-arcs-layer',
+            type: 'line',
+            source: 'trade-arcs-source',
+            layout: {
+                'line-join': 'round',
+                'line-cap': 'round'
+            },
+            paint: {
+                'line-color': '#FFD700', // Gold color for arcs
+                'line-width': 2,
+                'line-opacity': 0.7
             }
         });
 
-        // Variables to store the IDs of the hovered and selected countries
-        let hoveredCountryId = null;
-        let selectedCountryId = null;
+        // --- State Variables ---
+        let hoveredCountryISO = null; // Use ISO code now
+        let selectedCountryISO = null;
+        let currentTradePartners = []; // Store ISO codes of highlighted partners
 
-        // Mousemove event listener (handles hover state)
+        // --- Event Listeners ---
+
+        // Mousemove (Hover)
         map.on('mousemove', 'country-boundaries-fill', (e) => {
             if (e.features.length > 0) {
-                // Only manage hover state if the feature is not the selected one
-                if (hoveredCountryId !== e.features[0].id) {
-                    // Reset state for the previously hovered feature (if it exists and isn't the selected one)
-                    if (hoveredCountryId !== null && hoveredCountryId !== selectedCountryId) {
+                const currentISO = e.features[0].id; // ID is now ISO code due to promoteId
+                if (hoveredCountryISO !== currentISO) {
+                    // Reset previous hover state (if not selected or a partner)
+                    if (hoveredCountryISO && hoveredCountryISO !== selectedCountryISO && !currentTradePartners.includes(hoveredCountryISO)) {
                         map.setFeatureState(
-                            { source: 'countries', sourceLayer: 'country_boundaries', id: hoveredCountryId },
+                            { source: 'countries', sourceLayer: 'country_boundaries', id: hoveredCountryISO },
                             { hover: false }
                         );
                     }
-                    hoveredCountryId = e.features[0].id;
-                    // Set hover state for the current feature (if it isn't the selected one)
-                    if (hoveredCountryId !== selectedCountryId) {
-                         map.setFeatureState(
-                            { source: 'countries', sourceLayer: 'country_boundaries', id: hoveredCountryId },
+                    hoveredCountryISO = currentISO;
+                    // Set current hover state (if not selected or a partner)
+                    if (hoveredCountryISO !== selectedCountryISO && !currentTradePartners.includes(hoveredCountryISO)) {
+                        map.setFeatureState(
+                            { source: 'countries', sourceLayer: 'country_boundaries', id: hoveredCountryISO },
                             { hover: true }
                         );
                     }
@@ -97,42 +202,99 @@
             }
         });
 
-        // Mouseleave event listener (handles hover state)
+        // Mouseleave (Hover)
         map.on('mouseleave', 'country-boundaries-fill', () => {
-            // Reset state for the previously hovered feature (if it exists and isn't the selected one)
-            if (hoveredCountryId !== null && hoveredCountryId !== selectedCountryId) {
+            if (hoveredCountryISO && hoveredCountryISO !== selectedCountryISO && !currentTradePartners.includes(hoveredCountryISO)) {
                 map.setFeatureState(
-                    { source: 'countries', sourceLayer: 'country_boundaries', id: hoveredCountryId },
+                    { source: 'countries', sourceLayer: 'country_boundaries', id: hoveredCountryISO },
                     { hover: false }
                 );
             }
-            hoveredCountryId = null;
+            hoveredCountryISO = null;
         });
 
-        // Click event listener (handles selected state)
+        // Click (Select, Draw Arcs, Highlight Partners)
         map.on('click', 'country-boundaries-fill', (e) => {
             if (e.features.length > 0) {
-                const clickedCountryId = e.features[0].id;
+                const clickedCountryISO = e.features[0].id; // ID is now ISO code
 
-                // If there was a previously selected country, reset its state
-                if (selectedCountryId !== null) {
-                     map.setFeatureState(
-                        { source: 'countries', sourceLayer: 'country_boundaries', id: selectedCountryId },
-                        { selected: false, hover: false } // Also clear hover just in case
+                // --- Clear Previous State ---
+                // 1. Clear previous selection state
+                if (selectedCountryISO) {
+                    map.setFeatureState(
+                        { source: 'countries', sourceLayer: 'country_boundaries', id: selectedCountryISO },
+                        { selected: false, hover: false } // Clear selected and any lingering hover
                     );
                 }
+                 // 2. Clear previous trade partner highlights
+                currentTradePartners.forEach(partnerISO => {
+                     map.setFeatureState(
+                        { source: 'countries', sourceLayer: 'country_boundaries', id: partnerISO },
+                        { trade_partner: false, hover: false } // Clear partner and hover
+                    );
+                });
+                currentTradePartners = []; // Reset partner list
 
-                // Update the selected country ID
-                selectedCountryId = clickedCountryId;
+                 // 3. Clear previous arcs
+                map.getSource('trade-arcs-source').setData({
+                    type: 'FeatureCollection',
+                    features: []
+                });
 
-                // Set the state for the newly selected country
-                map.setFeatureState(
-                    { source: 'countries', sourceLayer: 'country_boundaries', id: selectedCountryId },
-                    { selected: true, hover: false } // Ensure hover is false when selected
-                );
-            }
-        });
-    });
+
+                // --- Set New State ---
+                 // Check if clicking the already selected country to deselect
+                if (selectedCountryISO === clickedCountryISO) {
+                     selectedCountryISO = null; // Deselect
+                     // State already cleared above
+                } else {
+                    // Selecting a new country
+                    selectedCountryISO = clickedCountryISO;
+
+                    // 1. Set selected state for the clicked country
+                    map.setFeatureState(
+                        { source: 'countries', sourceLayer: 'country_boundaries', id: selectedCountryISO },
+                        { selected: true, hover: false } // Ensure hover is off when selected
+                    );
+
+                    // 2. Find trade data and centroids
+                    const partners = tradeData[selectedCountryISO] || [];
+                    const selectedCentroid = countryCentroids[selectedCountryISO];
+                    const arcFeatures = [];
+
+                    if (selectedCentroid && partners.length > 0) {
+                        partners.forEach(partnerISO => {
+                            const partnerCentroid = countryCentroids[partnerISO];
+                            if (partnerCentroid) {
+                                // 3. Highlight Trade Partners
+                                map.setFeatureState(
+                                    { source: 'countries', sourceLayer: 'country_boundaries', id: partnerISO },
+                                    { trade_partner: true, hover: false } // Set partner state, clear hover
+                                );
+                                currentTradePartners.push(partnerISO); // Keep track
+
+                                // 4. Create Arcs
+                                const arcFeature = createArc(selectedCentroid, partnerCentroid);
+                                arcFeatures.push(arcFeature);
+                            } else {
+                                console.warn(`Centroid not found for partner: ${partnerISO}`);
+                            }
+                        });
+
+                        // 5. Update arc source with new features
+                        map.getSource('trade-arcs-source').setData({
+                            type: 'FeatureCollection',
+                            features: arcFeatures
+                        });
+
+                    } else {
+                        if (!selectedCentroid) console.warn(`Centroid not found for selected country: ${selectedCountryISO}`);
+                        if (partners.length === 0) console.log(`No trade data found for selected country: ${selectedCountryISO}`);
+                    }
+                } // End else (selecting a new country)
+            } // End if (e.features.length > 0)
+        }); // End click listener
+    }); // End style.load
 </script>
 
 </body>
